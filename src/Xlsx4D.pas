@@ -152,25 +152,79 @@ end;
 
 class procedure TReaderHelper.CellRefToRowCol(const ACellRef: string; out ARow,
   ACol: Integer);
+var
+  I: Integer;
+  ColPart, RowPart: string;
 begin
+  ColPart := '';
+  RowPart := '';
 
+  for I := 1 to Length(ACellRef) do
+  begin
+    if CharInSet(ACellRef[I], ['A'..'Z', 'a'..'z']) then
+      ColPart := ColPart + UpCase(ACellRef[I])
+    else
+      RowPart := RowPart + ACellRef[I];
+  end;
+
+  ACol := 0;
+  for I := 1 to Length(ColPart) do
+    ACol := ACol * 26 + (Ord(ColPart[I]) - Ord('A') + 1);
+
+  ARow := StrToIntDef(RowPart, 1);
 end;
 
 class function TReaderHelper.QuickLoadFirstSheet(
   const AFileName: string): TWorksheet;
+var
+  Reader: TReader;
 begin
+  Reader := TReader.Create;
+  try
+    Reader.LoadFromFile(AFileName);
+    if Reader.WorksheetCount > 0 then
+    begin
+      Result := TWorksheet.Create(Reader.Worksheets[0].Name);
+      Result := Reader.Worksheets[0];
+    end
+    else
+      Result := nil;
+  finally
 
+  end;
 end;
 
 class function TReaderHelper.QuickReadCell(const AFileName: string; ASheetIndex,
   ARow, ACol: Integer): string;
+var
+  Reader: TReader;
 begin
-
+  Result := '';
+  Reader := TReader.Create;
+  try
+    Reader.LoadFromFile(AFileName);
+    if ASheetIndex < Reader.WorksheetCount then
+      Result := Reader.GetCellValue(ASheetIndex, ARow, ACol);
+  finally
+    Reader.Free;
+  end;
 end;
 
 class function TReaderHelper.RowColToCellRef(ARow, ACol: Integer): string;
+var
+  ColStr: string;
+  Temp: Integer;
 begin
+  ColStr := '';
+  Temp := ACol;
+  while Temp > 0 do
+  begin
+    Dec(Temp);
+    ColStr := Chr(Ord('A') + (Temp mod 26)) + ColStr;
+    Temp := Temp div 26;
+  end;
 
+  Result := ColStr + IntToStr(ARow);
 end;
 
 end.
