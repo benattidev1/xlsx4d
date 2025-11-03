@@ -238,8 +238,18 @@ end;
 { TWorksheets }
 
 function TWorksheets.FindByName(const AName: string): TWorksheet;
+var
+  I: Integer;
 begin
-
+  Result := nil;
+  for I := 0 to Count - 1 do
+  begin
+    if SameText(Items[I].Name, AName) then
+    begin
+      Result := Items[I];
+      Exit;
+    end;
+  end;
 end;
 
 end.
