@@ -4,17 +4,18 @@ interface
 
 uses
   System.Generics.Collections,
-  System.SysUtils;
+  System.SysUtils,
+  System.Variants;
 
 type
   TCellType = (ctEmpty, ctString, ctNumber, ctBoolean, ctDate, ctFormula, ctError);
 
   TCell = record
-    Row: Integer;           // Linha (1-based)
-    Col: Integer;           // Coluna (1-based)
-    Value: Variant;         // Valor da célula
-    CellType: TCellType;    // Tipo da célula
-    FormattedValue: string; // Valor formatado como string
+    Row: Integer;
+    Col: Integer;
+    Value: Variant;
+    CellType: TCellType;
+    FormattedValue: string;
 
     class function Empty(ARow, ACol: Integer): TCell; static;
     class function Create(ARow, ACol: Integer; const AValue: Variant; ACellType: TCellType = ctString): TCell; static;
@@ -66,44 +67,78 @@ implementation
 
 function TCell.AsBoolean: Boolean;
 begin
-
+  if IsEmpty then
+    Result := False
+  else
+  try
+    Result := VarAsType(Value, varBoolean)
+  except
+    Result := False;
+  end;
 end;
 
 function TCell.AsDateTime: TDateTime;
 begin
-
+  if IsEmpty then
+    Result := 0
+  else
+  try
+    if VarIsNumeric(Value) then
+      Result := Double(Value) + EncodeDate(1899, 12, 30)
+    else
+      Result := StrToDateTime(VarToStr(Value));
+  except
+    Result := 0;
+  end;
 end;
 
 function TCell.AsFloat: Double;
 begin
-
+  if IsEmpty then
+    Result := 0.00
+  else
+  try
+    Result := VarAsType(Value, varDouble);
+  except
+    Result := 0.00;
+  end;
 end;
 
 function TCell.AsInteger: Integer;
 begin
-
+  if IsEmpty then
+    Result := 0
+  else
+    Result := StrToIntDef(VarToStrDef(Value, '0'), 0);
 end;
 
 function TCell.AsString: string;
 begin
-
+  if IsEmpty then
+    Result := ''
+  else
+    Result := VarToStrDef(Value, '');
 end;
 
-class function TCell.Create(ARow, ACol: Integer; const AValue: Variant;
-  ACellType: TCellType): TCell;
+class function TCell.Create(ARow, ACol: Integer; const AValue: Variant; ACellType: TCellType): TCell;
 begin
-
+  Result.Row := ARow;
+  Result.Col := ACol;
+  Result.Value := AValue;
+  Result.CellType := ACellType;
+  Result.FormattedValue := VarToStrDef(AValue, '');
 end;
 
 class function TCell.Empty(ARow, ACol: Integer): TCell;
 begin
-
+  Result := TCell.Create(ARow, ACol, Null, ctEmpty);
 end;
 
 function TCell.IsEmpty: Boolean;
 begin
-
+  Result := (CellType = ctEmpty) or VarIsNull(Value) or VarIsEmpty(Value);
 end;
+
 
 { TWorksheet }
 
