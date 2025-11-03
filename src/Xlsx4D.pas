@@ -190,7 +190,8 @@ begin
     else
       Result := nil;
   finally
-
+    // Não liberamos o Reader para manter a planilha ativa
+    // Em produção, seria melhor implementar um método de cópia
   end;
 end;
 
