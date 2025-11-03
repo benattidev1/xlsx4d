@@ -41,7 +41,7 @@ type
     function GetRowCount: Integer;
     function GetColCount: Integer;
   public
-    constructor Create;
+    constructor Create(const AName: string);
     destructor Destroy; override;
 
     procedure Clear;
@@ -143,49 +143,96 @@ end;
 { TWorksheet }
 
 procedure TWorksheet.AddCell(const ACell: TCell);
+var
+  RowList: TRowCells;
+  I: Integer;
 begin
+  while FRows.Count < ACell.Row do
+    FRows.Add(TRowCells.Create);
 
+  RowList := FRows[ACell.Row - 1];
+
+  for I := 0 to RowList.Count - 1 do
+  begin
+    if RowList[I].Col = ACell.Col then
+    begin
+      RowList[I] := ACell;
+      Exit;
+    end;
+  end;
+
+  RowList.Add(ACell);
+
+  if ACell.Row > FMaxRow then
+    FMaxRow := ACell.Row;
+  if ACell.Col > FMaxCol then
+    FMaxCol := ACell.Col;
 end;
 
 procedure TWorksheet.Clear;
 begin
-
+  FRows.Clear;
+  FMaxRow := 0;
+  FMaxCol := 0;
 end;
 
-constructor TWorksheet.Create;
+constructor TWorksheet.Create(const AName: string);
 begin
-
+  inherited Create;
+  FName := AName;
+  FRows := TObjectList<TRowCells>.Create(True);
+  FMaxRow := 0;
+  FMaxCol := 0;
 end;
 
 destructor TWorksheet.Destroy;
 begin
-
+  FRows.Free;
   inherited;
 end;
 
 function TWorksheet.GetCell(ARow, ACol: Integer): TCell;
+var
+  RowList: TRowCells;
+  I: Integer;
 begin
+  Result := TCell.Empty(ARow, ACol);
 
+  if (ARow < 1) or (ARow > FRows.Count) then
+    Exit;
+
+  RowList := FRows[ARow - 1];
+  for I := 0 to RowList.Count - 1 do
+  begin
+    if RowList[I].Col = ACol then
+    begin
+      Result := RowList[I];
+      Exit;
+    end;
+  end;
 end;
 
 function TWorksheet.GetColCount: Integer;
 begin
-
+  Result := FMaxCol;
 end;
 
 function TWorksheet.GetRow(ARow: Integer): TRowCells;
 begin
-
+  if (ARow < 1) or (ARow > FRows.Count) then
+    Result := nil
+  else
+    Result := FRows[ARow - 1];
 end;
 
 function TWorksheet.GetRowCount: Integer;
 begin
-
+  Result := FMaxRow;
 end;
 
 procedure TWorksheet.SetCell(ARow, ACol: Integer; const Value: TCell);
 begin
-
+  AddCell(Value);
 end;
 
 { TWorksheets }
