@@ -150,6 +150,7 @@ var
   XMLDoc: TXMLDocument;
   Node, TextNode: IXMLNode;
   I: Integer;
+  Bytes: TBytes;
 begin
   FSharedStrings.Clear;
 
@@ -158,8 +159,13 @@ begin
 
   Stream := TMemoryStream.Create;
   try
-    AZipFile.Read('xl/sharedStrings.xml', Stream);
-    Stream.Position := 0;
+    AZipFile.Read('xl/sharedStrings.xml', Bytes);
+
+    if Length(Bytes) > 0 then
+    begin
+      Stream.WriteBuffer(Bytes[0], Length(Bytes));
+      Stream.Position := 0;
+    end;
 
     XMLDoc := TXMLDocument.Create(nil);
     XMLDoc.LoadFromStream(Stream);
@@ -192,11 +198,17 @@ var
   SheetsNode, SheetNode: IXMLNode;
   I: Integer;
   SheetName: string;
+  Bytes: TBytes;
 begin
   Stream := TMemoryStream.Create;
   try
-    AZipFile.Read('xml/workbook.xml', Stream);
-    Stream.Position := 0;
+    AZipFile.Read('xml/workbook.xml', Bytes);
+
+    if Length(Bytes) > 0 then
+    begin
+      Stream.WriteBuffer(Bytes[0], Length(Bytes));
+      Stream.Position := 0;
+    end;
 
     XMLDoc := TXMLDocument.Create(nil);
     XMLDoc.LoadFromStream(Stream);
@@ -234,14 +246,20 @@ var
   Row, Col: Integer;
   Cell: TCell;
   CellType: TCellType;
+   Bytes: TBytes;
 begin
   if AZipFile.IndexOf(ASheetPath) < 0 then
     Exit;
 
   Stream := TMemoryStream.Create;
   try
-    AZipFile.Read(ASheetPath, Stream);
-    Stream.Position := 0;
+    AZipFile.Read(ASheetPath, Bytes);
+
+    if Length(Bytes) > 0 then
+    begin
+      Stream.WriteBuffer(Bytes[0], Length(Bytes));
+      Stream.Position := 0;
+    end;
 
     XMLDoc := TXMLDocument.Create(nil);
     XMLDoc.LoadFromStream(Stream);
