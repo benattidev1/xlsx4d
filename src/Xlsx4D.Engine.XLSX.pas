@@ -33,7 +33,9 @@ implementation
 uses
   System.SysUtils,
   System.Variants,
-  Xml.XMLDoc;
+  Xml.XMLDoc,
+  Xml.omnixmldom,
+  Xml.xmldom;
 
 { TXLSXEngine }
 
@@ -148,7 +150,7 @@ procedure TXLSXEngine.LoadSharedStrings(const AZipFile: TZipFile);
 var
   Stream: TMemoryStream;
   XMLDoc: TXMLDocument;
-  Node, TextNode: IXMLNode;
+  RootNode, SiNode, TextNode: IXMLNode;
   I: Integer;
   Bytes: TBytes;
 begin
@@ -159,6 +161,7 @@ begin
 
   Stream := TMemoryStream.Create;
   try
+    DefaultDOMVendor := sOmniXmlVendor;
     AZipFile.Read('xl/sharedStrings.xml', Bytes);
 
     if Length(Bytes) > 0 then
@@ -168,24 +171,58 @@ begin
     end;
 
     XMLDoc := TXMLDocument.Create(nil);
+    XMLDoc.DOMVendor := GetDOMVendor(sOmniXmlVendor);
+
     XMLDoc.LoadFromStream(Stream);
     XMLDoc.Active := True;
 
-    Node := XMLDoc.DocumentElement;
-    if Assigned(Node) then
+    RootNode := XMLDoc.DocumentElement;
+    if not Assigned(RootNode) then
     begin
-      for I := 0 to Node.ChildNodes.Count - 1 do
+      XMLDoc.Active := False;
+      Exit;
+    end;
+
+    if not RootNode.HasChildNodes then
+    begin
+      XMLDoc.Active := False;
+      Exit;
+    end;
+
+    for I := 0 to RootNode.ChildNodes.Count - 1 do
+    begin
+      SiNode := RootNode.ChildNodes[I];
+
+      if not Assigned(SiNode) then
+        Continue;
+
+      if SameText(SiNode.NodeName, 'si') then
       begin
-        if SameText(Node.ChildNodes[I].NodeName, 'si') then
+        TextNode := SiNode.ChildNodes.FindNode('t');
+
+        if Assigned(TextNode) then
+          FSharedStrings.Add(TextNode.Text)
+        else
         begin
-          TextNode := Node.ChildNodes[I].ChildNodes.FindNode('t');
+          TextNode := SiNode.ChildNodes.FindNode('r');
           if Assigned(TextNode) then
-            FSharedStrings.Add(TextNode.Text)
+          begin
+            TextNode := TextNode.ChildNodes.FindNode('t');
+
+            if Assigned(TextNode) then
+            begin
+              FSharedStrings.Add(TextNode.Text)
+            end
+            else
+              FSharedStrings.Add('');
+          end
           else
             FSharedStrings.Add('');
         end;
       end;
     end;
+
+    XMLDoc.Active := False;
   finally
     Stream.Free;
   end;
