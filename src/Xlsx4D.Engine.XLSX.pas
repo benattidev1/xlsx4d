@@ -183,7 +183,10 @@ begin
     end;
   except
     on E: Exception do
-      raise EXlsx4DException.Create('Erro ao ler sharedStrings.xml: ' + E.Message);
+      raise EXlsx4DException.CreateFmt(
+        'Failed to load shared strings: %s',
+        [E.Message]
+      );
   end;
 end;
 
@@ -199,7 +202,7 @@ begin
   WorkbookPath := TPath.Combine(FTempPath, 'xl\workbook.xml');
   
   if not TFile.Exists(WorkbookPath) then
-    raise EXlsx4DException.Create('Arquivo workbook.xml não encontrado');
+    raise EXlsx4DException.Create('workbook.xml not found in XLSX package.');
   
   try
     XMLContent := TFile.ReadAllText(WorkbookPath, TEncoding.UTF8);
@@ -243,7 +246,10 @@ begin
     end;
   except
     on E: Exception do
-      raise EXlsx4DException.Create('Erro ao ler workbook.xml: ' + E.Message);
+      raise EXlsx4DException.CreateFmt(
+        'Failed to load worksheets: %s',
+        [E.Message]
+      );
   end;
 end;
 
@@ -330,7 +336,10 @@ begin
     end;
   except
     on E: Exception do
-      raise EXlsx4DException.CreateFmt('Erro ao ler sheet%d.xml: %s', [ASheetIndex, E.Message]);
+      raise EXlsx4DException.CreateFmt('
+        'Failed to load worksheet data for sheet "%s": %s',
+        [ASheetName, E.Message]
+      );
   end;
 end;
 
@@ -383,7 +392,10 @@ end;
 function TXLSXEngine.LoadFromFile(const AFileName: string): TWorksheets;
 begin
   if not TFile.Exists(AFileName) then
-    raise EXlsx4DException.CreateFmt('Arquivo não encontrado: %s', [AFileName]);
+    raise EXlsx4DException.CreateFmt(
+      'Unable to load file "%s". File does not exist or is not accessible.',
+      [AFileName]
+    );
     
   FWorksheets := TWorksheets.Create(True);
   
@@ -398,7 +410,10 @@ begin
     on E: Exception do
     begin
       Cleanup;
-      raise EXlsx4DException.CreateFmt('Erro ao carregar arquivo XLSX: %s', [E.Message]);
+      raise EXlsx4DException.CreateFmt(
+        'Failed to load XLSX file "%s": %s',
+        [AFileName, E.Message]
+      );
     end;
   end;
 end;

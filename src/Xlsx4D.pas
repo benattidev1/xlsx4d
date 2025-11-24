@@ -11,13 +11,43 @@ type
     FWorkSheets: TWorksheets;
     FFileName: string;
   public
+    /// <summary>
+    ///   Creates a new instance of TXlsx4D
+    /// </summary>
     constructor Create;
     destructor Destroy; override;
 
+    /// <summary>
+    ///   Loads an XLSX file from disk
+    /// </summary>
+    /// <param name="AFileName">Full path to the Excel file (XLSX or XLS format)</param>
+    /// <returns>True if file was loaded successfully, False otherwise</returns>
+    /// <exception cref="EXlsx4DException">Raised when file does not exist</exception>
     function LoadFromFile(const AFileName: string): Boolean;
+
+    /// <summary>
+    ///   Gets the collection of worksheets
+    /// </summary>
+    /// <returns>The collection of worksheets</returns>    
     function GetWorksheets: TWorksheets;
+
+    /// <summary>
+    /// Gets a worksheet by its name
+    /// </summary>
+    /// <param name="AName">The name of the worksheet to find</param>
+    /// <returns>The worksheet if found, nil otherwise</returns>
     function GetWorksheet(const AName: string): TWorksheet;
+
+    /// <summary>
+    ///   Gets a worksheet by its index
+    /// </summary>
+    /// <param name="AIndex">The index of the worksheet to get (0-based)</param>
+    /// <returns>The worksheet if found, nil otherwise</returns>
     function GetWorksheetByIndex(const AIndex: Integer): TWorksheet;
+
+    /// <summary>
+    ///   Gets the number of worksheets in the workbook
+    /// </summary>    
     function GetWorksheetCount: Integer;
 
     property FileName: string read FFileName;
@@ -81,7 +111,10 @@ begin
   Result := False;
 
   if not FileExists(AFileName) then
-    raise EXlsx4DException.CreateFmt('File not found: %s', [AFileName]);
+    raise EXlsx4DException.CreateFmt(
+      'Unable to load file "%s". File does not exist or is not accessible.',
+      [AFileName]
+    );
 
   // free previous worksheets if any
   if FWorkSheets <> nil then

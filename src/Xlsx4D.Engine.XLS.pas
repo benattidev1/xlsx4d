@@ -14,7 +14,7 @@ type
     FCurrentWorksheet: TWorksheet;
     FSSTStrings: TStringList;
 
-    // Constantes de registros BIFF8
+    // BIFF8 record type constants
     const
       BIFF_BOF = $0809;
       BIFF_EOF = $000A;
