@@ -50,7 +50,7 @@ constructor TXLSXEngine.Create;
 begin
   inherited Create;
   FSharedStrings := TStringList.Create;
-  FWorksheets := TWorksheets.Create(True);
+  FWorksheets := nil;
   FZipFile := TZipFile.Create;
 end;
 
@@ -58,7 +58,8 @@ destructor TXLSXEngine.Destroy;
 begin
   Cleanup;
   FSharedStrings.Free;
-  FWorksheets.Free;
+  if FWorksheets <> nil then
+    FWorksheets.Free;
   FZipFile.Free;
   inherited;
 end;
@@ -384,13 +385,15 @@ begin
   if not TFile.Exists(AFileName) then
     raise EXlsx4DException.CreateFmt('Arquivo não encontrado: %s', [AFileName]);
     
-  FWorksheets.Clear;
+  FWorksheets := TWorksheets.Create(True);
   
   try
     ExtractXLSXContents(AFileName);
     LoadSharedStrings;
     LoadWorksheets;
+
     Result := FWorksheets;
+    FWorksheets := nil;
   except
     on E: Exception do
     begin
