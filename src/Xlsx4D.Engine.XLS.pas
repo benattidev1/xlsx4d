@@ -62,7 +62,7 @@ end;
 
 function TXLSEngine.LoadFromFile(const AFileName: string): TWorksheets;
 begin
-
+  raise EXlsx4DException.Create('Not implemented yet');
 end;
 
 procedure TXLSEngine.ReadBoundSheets;
