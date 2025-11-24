@@ -3,229 +3,97 @@ unit Xlsx4D;
 interface
 
 uses
-  System.SysUtils,
-  Xlsx4D.Engine.XLSX,
-  Xlsx4D.Engine.XLS,
-  XLSX4D.Types;
+  Xlsx4D.Types, System.SysUtils;
 
 type
-  TReader = class
+  TXlsx4D = class
   private
+    FWorkSheets: TWorksheets;
     FFileName: string;
-    FWorksheets: TWorksheets;
-
-    function GetWorksheetCount: Integer;
-    function GetWorksheet(Index: Integer): TWorksheet;
-    function IsXLSXFile(const AFileName: string): Boolean;
   public
     constructor Create;
     destructor Destroy; override;
 
-    procedure LoadFromFile(const AFileName: string);
-    procedure Clear;
-    function FindWorksheet(const AName: string): TWorksheet;
-    function GetCellValue(ASheetIndex, ARow, ACol: Integer): string; overload;
-    function GetCellValue(const ASheetName: string; ARow, ACol: Integer): string; overload;
+    function LoadFromFile(const AFileName: string): Boolean;
+    function GetWorksheets: TWorksheets;
+    function GetWorksheet(const AName: string): TWorksheet;
+    function GetWorksheetByIndex(const AIndex: Integer): TWorksheet;
+    function GetWorksheetCount: Integer;
 
-    property FileName: string read FFileName write FFileName;
-    property WorksheetCount: Integer read GetWorksheetCount;
-    property Worksheets[Index: Integer]: TWorksheet read GetWorksheet; default;
-  end;
-
-  TReaderHelper = class
-  public
-    class function QuickLoadFirstSheet(const AFileName: string): TWorksheet;
-    class function QuickReadCell(const AFileName: string; ASheetIndex, ARow, ACol: Integer): string;
-    class procedure CellRefToRowCol(const ACellRef: string; out ARow, ACol: Integer);
-    class function RowColToCellRef(ARow, ACol: Integer): string;
+    property FileName: string read FFileName;
+    property Worksheets: TWorksheets read GetWorksheets;
   end;
 
 implementation
 
-uses
-  System.IOUtils;
+uses 
+  Xlsx4D.Engine.XLSX;
 
-{ TReader }
+{ TXlsx4D }
 
-procedure TReader.Clear;
+constructor TXlsx4D.Create;
 begin
-  FWorksheets.Clear;
+  inherited Create;
+  FWorkSheets := nil;
   FFileName := '';
 end;
 
-constructor TReader.Create;
+destructor TXlsx4D.Destroy;
 begin
-  inherited Create;
-  FWorksheets := TWorksheets.Create(True);
-end;
-
-destructor TReader.Destroy;
-begin
-  FWorksheets.Free;
+  if FWorkSheets <> nil then
+    FWorkSheets.Free;
   inherited;
 end;
 
-function TReader.FindWorksheet(const AName: string): TWorksheet;
+function TXlsx4D.GetWorksheet(const AName: string): TWorksheet;
 begin
-  Result := FWorksheets.FindByName(AName);
-end;
-
-function TReader.GetCellValue(ASheetIndex, ARow, ACol: Integer): string;
-begin
-  Result := '';
-  if (ASheetIndex > 0) and (ASheetIndex < FWorksheets.Count) then
-    Result := FWorksheets[ASheetIndex].Cells[ARow, ACol].AsString;
-end;
-
-function TReader.GetCellValue(const ASheetName: string; ARow,
-  ACol: Integer): string;
-var
-  Sheet: TWorksheet;
-begin
-  Result := '';
-  Sheet := FindWorksheet(ASheetName);
-  if Assigned(Sheet) then
-    Result := Sheet.Cells[ARow, ACol].AsString;
-end;
-
-function TReader.GetWorksheet(Index: Integer): TWorksheet;
-begin
-  if (Index >= 0) and (Index < FWorksheets.Count) then
-    Result := FWorksheets[Index]
+  if FWorkSheets = nil then 
+    Result := Nil
   else
-    raise EXlsx4DException.CreateFmt('Índice de planilha inválido: %d', [Index]);
+    Result := FWorkSheets.FindByName(AName);
 end;
 
-function TReader.GetWorksheetCount: Integer;
+function TXlsx4D.GetWorksheetByIndex(const AIndex: Integer): TWorksheet;
 begin
-  Result := FWorksheets.Count;
+  if (FWorkSheets = nil) or (AIndex < 0) or (AIndex >= FWorkSheets.Count) then 
+    Result := Nil
+  else
+    Result := FWorkSheets.Items[AIndex];
 end;
 
-function TReader.IsXLSXFile(const AFileName: string): Boolean;
+function TXlsx4D.GetWorksheetCount: Integer;
+begin
+  if FWorkSheets = nil then
+    Result := 0
+  else
+    Result := FWorkSheets.Count;
+end;
+
+function TXlsx4D.GetWorksheets: TWorksheets;
+begin
+  Result := FWorkSheets;
+end;
+
+function TXlsx4D.LoadFromFile(const AFileName: string): Boolean;
 var
-  Ext: string;
+  Engine: TXLSXEngine;
 begin
-  Ext := LowerCase(TPath.GetExtension(AFileName));
-  Result := (Ext = '.xlsx') or (Ext = '.xlsm');
-end;
+  Result := False;
 
-procedure TReader.LoadFromFile(const AFileName: string);
-var
-  XlsxEngine: TXLSXEngine;
-  XlsEngine: TXLSEngine;
-  LoadedSheets: TWorksheets;
-begin
   if not FileExists(AFileName) then
-    raise EXlsx4DException.CreateFmt('Arquivo não encontrado: %s', [AFileName]);
+    raise EXlsx4DException.CreateFmt('File not found: %s', [AFileName]);
 
-  Clear;
-  FFileName := AFileName;
+  // free previous worksheets if any
+  if FWorkSheets <> nil then
+    FreeAndNil(FWorkSheets);
 
-  if IsXLSXFile(AFileName) then
-  begin
-    XlsxEngine := TXLSXEngine.Create;
-    try
-      LoadedSheets := XlsxEngine.LoadFromFile(AFileName);
-
-      FWorksheets.Free;
-      FWorksheets := LoadedSheets;
-    finally
-      XlsxEngine.Free;
-    end;
-  end
-  else
-  begin
-    XlsEngine := TXLSEngine.Create;
-    try
-      LoadedSheets := XlsEngine.LoadFromFile(AFileName);
-
-      FWorksheets.Free;
-      FWorksheets := LoadedSheets;
-    finally
-      XlsEngine.Free;
-    end;
-  end;
-end;
-
-
-{ TReaderHelper }
-
-class procedure TReaderHelper.CellRefToRowCol(const ACellRef: string; out ARow,
-  ACol: Integer);
-var
-  I: Integer;
-  ColPart, RowPart: string;
-begin
-  ColPart := '';
-  RowPart := '';
-
-  for I := 1 to Length(ACellRef) do
-  begin
-    if CharInSet(ACellRef[I], ['A'..'Z', 'a'..'z']) then
-      ColPart := ColPart + UpCase(ACellRef[I])
-    else
-      RowPart := RowPart + ACellRef[I];
-  end;
-
-  ACol := 0;
-  for I := 1 to Length(ColPart) do
-    ACol := ACol * 26 + (Ord(ColPart[I]) - Ord('A') + 1);
-
-  ARow := StrToIntDef(RowPart, 1);
-end;
-
-class function TReaderHelper.QuickLoadFirstSheet(
-  const AFileName: string): TWorksheet;
-var
-  Reader: TReader;
-begin
-  Reader := TReader.Create;
+  Engine := TXLSXEngine.Create;
   try
-    Reader.LoadFromFile(AFileName);
-    if Reader.WorksheetCount > 0 then
-    begin
-      Result := TWorksheet.Create(Reader.Worksheets[0].Name);
-      Result := Reader.Worksheets[0];
-    end
-    else
-      Result := nil;
+    FWorkSheets := Engine.LoadFromFile(AFileName);
+    FFileName := AFileName;
   finally
-    // Não liberamos o Reader para manter a planilha ativa
-    // Em produção, seria melhor implementar um método de cópia
+    Engine.Free;    
   end;
-end;
-
-class function TReaderHelper.QuickReadCell(const AFileName: string; ASheetIndex,
-  ARow, ACol: Integer): string;
-var
-  Reader: TReader;
-begin
-  Result := '';
-  Reader := TReader.Create;
-  try
-    Reader.LoadFromFile(AFileName);
-    if ASheetIndex < Reader.WorksheetCount then
-      Result := Reader.GetCellValue(ASheetIndex, ARow, ACol);
-  finally
-    Reader.Free;
-  end;
-end;
-
-class function TReaderHelper.RowColToCellRef(ARow, ACol: Integer): string;
-var
-  ColStr: string;
-  Temp: Integer;
-begin
-  ColStr := '';
-  Temp := ACol;
-  while Temp > 0 do
-  begin
-    Dec(Temp);
-    ColStr := Chr(Ord('A') + (Temp mod 26)) + ColStr;
-    Temp := Temp div 26;
-  end;
-
-  Result := ColStr + IntToStr(ARow);
 end;
 
 end.

@@ -4,352 +4,395 @@ interface
 
 uses
   System.Classes,
+  System.SysUtils,
   System.Zip,
-  Xml.XMLIntf,
+  System.Generics.Collections,
   Xlsx4D.Types;
 
 type
   TXLSXEngine = class
   private
-    FSharedStrings: TStringList;
     FWorksheets: TWorksheets;
-
-    procedure LoadSharedStrings(const AZipFile: TZipFile);
-    procedure LoadWorkbookInfo(const AZipFile: TZipFile);
-    procedure LoadWorksheet(const AZipFile: TZipFile; const ASheetPath: string;
-      AWorksheet: TWorksheet);
-    procedure ParseCellRef(const ACellRef: string; out ARow, ACol: Integer);
-    function ColLetterToNumber(const AColLetter: string): Integer;
-    function GetCellValue(const ANode: IXMLNode; out ACellType: TCellType): Variant;
+    FSharedStrings: TStringList;
+    FZipFile: TZipFile;
+    FTempPath: string;
+    
+    procedure ExtractXLSXContents(const AFileName: string);
+    procedure LoadSharedStrings;
+    procedure LoadWorksheets;
+    procedure LoadWorksheetData(const ASheetName: string; AWorksheet: TWorksheet; ASheetIndex: Integer);
+    function GetColumnIndex(const ACell: string): Integer;
+    function ParseCellReference(const ACellRef: string; out ARow, ACol: Integer): Boolean;
+    function GetSharedString(AIndex: Integer): string;
+    procedure Cleanup;
+    
+    // Helpers simples para parsing XML sem MSXML
+    function ParseXMLAttribute(const AXMLLine, AAttrName: string): string;
+    function ParseXMLValue(const AXMLLine, ATagName: string): string;
+    function ExtractTextBetweenTags(const AXMLContent, ATagName: string): TStringList;
   public
     constructor Create;
     destructor Destroy; override;
-
+    
     function LoadFromFile(const AFileName: string): TWorksheets;
   end;
 
 implementation
 
 uses
-  System.SysUtils,
+  System.IOUtils,
   System.Variants,
-  Xml.XMLDoc,
-  Xml.omnixmldom,
-  Xml.xmldom;
+  System.StrUtils,
+  System.RegularExpressions;
 
 { TXLSXEngine }
-
-function TXLSXEngine.ColLetterToNumber(const AColLetter: string): Integer;
-var
-  I: Integer;
-begin
-  Result := 0;
-  for I := 1 to Length(AColLetter) do
-  begin
-    Result := Result * 26 + (Ord(AColLetter[I]) - Ord('A') + 1);
-  end;
-end;
 
 constructor TXLSXEngine.Create;
 begin
   inherited Create;
   FSharedStrings := TStringList.Create;
+  FWorksheets := TWorksheets.Create(True);
+  FZipFile := TZipFile.Create;
 end;
 
 destructor TXLSXEngine.Destroy;
 begin
+  Cleanup;
   FSharedStrings.Free;
+  FWorksheets.Free;
+  FZipFile.Free;
   inherited;
 end;
 
-function TXLSXEngine.GetCellValue(const ANode: IXMLNode;
-  out ACellType: TCellType): Variant;
-var
-  ValueNode: IXMLNode;
-  CellTypeAttr: string;
-  ValueStr: string;
-  SharedStringIndex: Integer;
+procedure TXLSXEngine.Cleanup;
 begin
-  Result := Null;
-  ACellType := ctEmpty;
-
-  CellTypeAttr := ANode.Attributes['t'];
-
-  ValueNode := ANode.ChildNodes.FindNode('v');
-  if not Assigned(ValueNode) then
-    Exit;
-
-  ValueStr := ValueNode.Text;
-
-  if CellTypeAttr = 's' then
+  if FTempPath <> '' then
   begin
-    ACellType := ctString;
-    SharedStringIndex := StrToIntDef(ValueStr, -1);
-    if (SharedStringIndex >= 0) and (SharedStringIndex < FSharedStrings.Count) then
-      Result := FSharedStrings[SharedStringIndex]
-    else
-      Result := '';
-  end
-  else if CellTypeAttr = 'b' then
-  begin
-    ACellType := ctBoolean;
-    Result := (ValueStr = '1');
-  end
-  else if CellTypeAttr = 'e' then
-  begin
-    ACellType := ctError;
-    Result := ValueStr;
-  end
-  else if CellTypeAttr = 'str' then
-  begin
-    ACellType := ctString;
-    Result := ValueStr;
-  end
-  else
-  begin
-    ACellType := ctNumber;
-    Result := StrToFloatDef(StringReplace(ValueStr, '.', ',', [rfReplaceAll]), 0);
+    if TDirectory.Exists(FTempPath) then
+      TDirectory.Delete(FTempPath, True);
+    FTempPath := '';
   end;
 end;
 
-function TXLSXEngine.LoadFromFile(const AFileName: string): TWorksheets;
-var
-  ZipFile: TZipFile;
-  I: Integer;
+procedure TXLSXEngine.ExtractXLSXContents(const AFileName: string);
 begin
-  if not FileExists(AFileName) then
-    raise EXlsx4DException.CreateFmt('Arquivo n�o encontrado: %s', [AFileName]);
-
-  FWorksheets := TWorksheets.Create(True);
-  Result := FWorksheets;
-
-  ZipFile := TZipFile.Create;
+  Cleanup;
+  
+  FTempPath := TPath.Combine(TPath.GetTempPath, 'xlsx4d_' + TGuid.NewGuid.ToString);
+  TDirectory.CreateDirectory(FTempPath);
+  
+  FZipFile.Open(AFileName, zmRead);
   try
-    try
-      ZipFile.Open(AFileName, TZipMode.zmRead);
+    FZipFile.ExtractAll(FTempPath);
+  finally
+    FZipFile.Close;
+  end;
+end;
 
-      LoadSharedStrings(ZipFile);
+function TXLSXEngine.ParseXMLAttribute(const AXMLLine, AAttrName: string): string;
+var
+  StartPos, EndPos: Integer;
+  SearchStr: string;
+begin
+  Result := '';
+  SearchStr := AAttrName + '="';
+  StartPos := Pos(SearchStr, AXMLLine);
+  
+  if StartPos > 0 then
+  begin
+    StartPos := StartPos + Length(SearchStr);
+    EndPos := PosEx('"', AXMLLine, StartPos);
+    if EndPos > StartPos then
+      Result := Copy(AXMLLine, StartPos, EndPos - StartPos);
+  end;
+end;
 
-      LoadWorkbookInfo(ZipFile);
+function TXLSXEngine.ParseXMLValue(const AXMLLine, ATagName: string): string;
+var
+  StartTag, EndTag: string;
+  StartPos, EndPos: Integer;
+begin
+  Result := '';
+  StartTag := '<' + ATagName + '>';
+  EndTag := '</' + ATagName + '>';
+  
+  StartPos := Pos(StartTag, AXMLLine);
+  if StartPos > 0 then
+  begin
+    StartPos := StartPos + Length(StartTag);
+    EndPos := PosEx(EndTag, AXMLLine, StartPos);
+    if EndPos > StartPos then
+      Result := Copy(AXMLLine, StartPos, EndPos - StartPos);
+  end;
+end;
 
-      for I := 0 to FWorksheets.Count - 1 do
+function TXLSXEngine.ExtractTextBetweenTags(const AXMLContent, ATagName: string): TStringList;
+var
+  Lines: TStringList;
+  I: Integer;
+  InTag: Boolean;
+  CurrentContent: string;
+  Line: string;
+  StartTag, EndTag: string;
+begin
+  Result := TStringList.Create;
+  Lines := TStringList.Create;
+  try
+    Lines.Text := AXMLContent;
+    
+    StartTag := '<' + ATagName;
+    EndTag := '</' + ATagName + '>';
+    InTag := False;
+    CurrentContent := '';
+    
+    for I := 0 to Lines.Count - 1 do
+    begin
+      Line := Trim(Lines[I]);
+      
+      if Pos(StartTag, Line) > 0 then
       begin
-        LoadWorksheet(ZipFile, Format('xl/worksheets/sheet%d.xml', [I + 1]),
-          FWorksheets[I]);
+        InTag := True;
+        CurrentContent := Line;
+      end
+      else if InTag then
+      begin
+        CurrentContent := CurrentContent + ' ' + Line;
       end;
-    except
-      on E: Exception do
-        raise EXlsx4DException.CreateFmt('Erro ao ler arquivo XLSX: %s', [E.Message]);
+      
+      if InTag and (Pos(EndTag, Line) > 0) then
+      begin
+        Result.Add(CurrentContent);
+        InTag := False;
+        CurrentContent := '';
+      end;
     end;
   finally
-    ZipFile.Free;
+    Lines.Free;
   end;
 end;
 
-procedure TXLSXEngine.LoadSharedStrings(const AZipFile: TZipFile);
+procedure TXLSXEngine.LoadSharedStrings;
 var
-  Stream: TMemoryStream;
-  XMLDoc: TXMLDocument;
-  RootNode, SiNode, TextNode: IXMLNode;
+  SharedStringsPath: string;
+  XMLContent: string;
+  SITags: TStringList;
   I: Integer;
-  Bytes: TBytes;
+  TValue: string;
 begin
   FSharedStrings.Clear;
-
-  if AZipFile.IndexOf('xl/sharedStrings.xml') < 0 then
+  
+  SharedStringsPath := TPath.Combine(FTempPath, 'xl\sharedStrings.xml');
+  
+  if not TFile.Exists(SharedStringsPath) then
     Exit;
-
-  Stream := TMemoryStream.Create;
+  
   try
-    DefaultDOMVendor := sOmniXmlVendor;
-    AZipFile.Read('xl/sharedStrings.xml', Bytes);
-
-    if Length(Bytes) > 0 then
-    begin
-      Stream.WriteBuffer(Bytes[0], Length(Bytes));
-      Stream.Position := 0;
-    end;
-
-    XMLDoc := TXMLDocument.Create(nil);
-    XMLDoc.DOMVendor := GetDOMVendor(sOmniXmlVendor);
-
-    XMLDoc.LoadFromStream(Stream);
-    XMLDoc.Active := True;
-
-    RootNode := XMLDoc.DocumentElement;
-    if not Assigned(RootNode) then
-    begin
-      XMLDoc.Active := False;
-      Exit;
-    end;
-
-    if not RootNode.HasChildNodes then
-    begin
-      XMLDoc.Active := False;
-      Exit;
-    end;
-
-    for I := 0 to RootNode.ChildNodes.Count - 1 do
-    begin
-      SiNode := RootNode.ChildNodes[I];
-
-      if not Assigned(SiNode) then
-        Continue;
-
-      if SameText(SiNode.NodeName, 'si') then
+    XMLContent := TFile.ReadAllText(SharedStringsPath, TEncoding.UTF8);
+    
+    SITags := ExtractTextBetweenTags(XMLContent, 'si');
+    try
+      for I := 0 to SITags.Count - 1 do
       begin
-        TextNode := SiNode.ChildNodes.FindNode('t');
-
-        if Assigned(TextNode) then
-          FSharedStrings.Add(TextNode.Text)
-        else
-        begin
-          TextNode := SiNode.ChildNodes.FindNode('r');
-          if Assigned(TextNode) then
-          begin
-            TextNode := TextNode.ChildNodes.FindNode('t');
-
-            if Assigned(TextNode) then
-            begin
-              FSharedStrings.Add(TextNode.Text)
-            end
-            else
-              FSharedStrings.Add('');
-          end
-          else
-            FSharedStrings.Add('');
-        end;
+        TValue := ParseXMLValue(SITags[I], 't');
+        FSharedStrings.Add(TValue);
       end;
+    finally
+      SITags.Free;
     end;
-
-    XMLDoc.Active := False;
-  finally
-    Stream.Free;
+  except
+    on E: Exception do
+      raise EXlsx4DException.Create('Erro ao ler sharedStrings.xml: ' + E.Message);
   end;
 end;
 
-procedure TXLSXEngine.LoadWorkbookInfo(const AZipFile: TZipFile);
+procedure TXLSXEngine.LoadWorksheets;
 var
-  Stream: TMemoryStream;
-  XMLDoc: TXMLDocument;
-  SheetsNode, SheetNode: IXMLNode;
+  WorkbookPath: string;
+  XMLContent: string;
+  SheetTags: TStringList;
   I: Integer;
   SheetName: string;
-  Bytes: TBytes;
+  Worksheet: TWorksheet;
 begin
-  Stream := TMemoryStream.Create;
+  WorkbookPath := TPath.Combine(FTempPath, 'xl\workbook.xml');
+  
+  if not TFile.Exists(WorkbookPath) then
+    raise EXlsx4DException.Create('Arquivo workbook.xml não encontrado');
+  
   try
-    AZipFile.Read('xml/workbook.xml', Bytes);
-
-    if Length(Bytes) > 0 then
-    begin
-      Stream.WriteBuffer(Bytes[0], Length(Bytes));
-      Stream.Position := 0;
-    end;
-
-    XMLDoc := TXMLDocument.Create(nil);
-    XMLDoc.LoadFromStream(Stream);
-    XMLDoc.Active := True;
-
-    SheetsNode := XMLDoc.DocumentElement.ChildNodes.FindNode('sheets');
-    if Assigned(SheetsNode) then
-    begin
-      for I := 0 to SheetsNode.ChildNodes.Count - 1 do
+    XMLContent := TFile.ReadAllText(WorkbookPath, TEncoding.UTF8);
+    
+    SheetTags := ExtractTextBetweenTags(XMLContent, 'sheet');
+    try
+      for I := 0 to SheetTags.Count - 1 do
       begin
-        SheetNode := SheetsNode.ChildNodes[I];
-        if SameText(SheetNode.NodeName, 'sheet') then
+        SheetName := ParseXMLAttribute(SheetTags[I], 'name');
+        
+        if SheetName <> '' then
         begin
-          SheetName := SheetNode.Attributes['name'];
-          if SheetName = '' then
-            SheetName := Format('Sheet%d', [I + 1]);
-
-          FWorksheets.Add(TWorksheet.Create(SheetName));
+          Worksheet := TWorksheet.Create(SheetName);
+          FWorksheets.Add(Worksheet);
+          
+          LoadWorksheetData(SheetName, Worksheet, I + 1);
         end;
       end;
+    finally
+      SheetTags.Free;
     end;
-  finally
-    Stream.Free;
+  except
+    on E: Exception do
+      raise EXlsx4DException.Create('Erro ao ler workbook.xml: ' + E.Message);
   end;
 end;
 
-procedure TXLSXEngine.LoadWorksheet(const AZipFile: TZipFile;
-  const ASheetPath: string; AWorksheet: TWorksheet);
+procedure TXLSXEngine.LoadWorksheetData(const ASheetName: string; 
+  AWorksheet: TWorksheet; ASheetIndex: Integer);
 var
-  Stream: TMemoryStream;
-  XMLDoc: TXMLDocument;
-  SheetDataNode, RowNode, CellNode: IXMLNode;
+  SheetDataPath: string;
+  XMLContent: string;
+  RowTags, CellTags: TStringList;
   I, J: Integer;
-  CellRef: string;
+  CellRef, CellType, CellValue: string;
   Row, Col: Integer;
   Cell: TCell;
-  CellType: TCellType;
-   Bytes: TBytes;
+  NumValue: Double;
+  CellTag: string;
 begin
-  if AZipFile.IndexOf(ASheetPath) < 0 then
+  SheetDataPath := TPath.Combine(FTempPath, Format('xl\worksheets\sheet%d.xml', [ASheetIndex]));
+  
+  if not TFile.Exists(SheetDataPath) then
     Exit;
-
-  Stream := TMemoryStream.Create;
+  
   try
-    AZipFile.Read(ASheetPath, Bytes);
-
-    if Length(Bytes) > 0 then
-    begin
-      Stream.WriteBuffer(Bytes[0], Length(Bytes));
-      Stream.Position := 0;
-    end;
-
-    XMLDoc := TXMLDocument.Create(nil);
-    XMLDoc.LoadFromStream(Stream);
-    XMLDoc.Active := True;
-
-    SheetDataNode := XMLDoc.DocumentElement.ChildNodes.FindNode('sheetData');
-    if not Assigned(SheetDataNode) then
-      Exit;
-
-    for I := 0 to SheetDataNode.ChildNodes.Count - 1 do
-    begin
-      RowNode := SheetDataNode.ChildNodes[I];
-      if not SameText(RowNode.NodeName, 'row') then
-        Continue;
-
-      for J := 0 to RowNode.ChildNodes.Count - 1 do
+    XMLContent := TFile.ReadAllText(SheetDataPath, TEncoding.UTF8);
+    
+    RowTags := ExtractTextBetweenTags(XMLContent, 'row');
+    try
+      for I := 0 to RowTags.Count - 1 do
       begin
-        CellNode := RowNode.ChildNodes[J];
-        if not SameText(CellNode.NodeName, 'c') then
-          Continue;
-
-        CellRef := CellNode.Attributes['r'];
-        ParseCellRef(CellRef, Row, Col);
-
-        Cell := TCell.Create(Row, Col, GetCellValue(CellNode, CellType), CellType);
-        AWorksheet.AddCell(Cell);
+        CellTags := ExtractTextBetweenTags(RowTags[I], 'c');
+        try
+          for J := 0 to CellTags.Count - 1 do
+          begin
+            CellTag := CellTags[J];
+            
+            CellRef := ParseXMLAttribute(CellTag, 'r');
+            CellType := ParseXMLAttribute(CellTag, 't');
+            CellValue := ParseXMLValue(CellTag, 'v');
+            
+            if not ParseCellReference(CellRef, Row, Col) then
+              Continue;
+            
+            // Processa de acordo com o tipo
+            if CellType = 's' then
+            begin
+              // String compartilhada
+              Cell := TCell.Create(Row, Col, GetSharedString(StrToIntDef(CellValue, 0)), ctString);
+            end
+            else if CellType = 'str' then
+            begin
+              // String inline
+              Cell := TCell.Create(Row, Col, CellValue, ctString);
+            end
+            else if CellType = 'b' then
+            begin
+              // Boolean
+              Cell := TCell.Create(Row, Col, CellValue = '1', ctBoolean);
+            end
+            else if CellType = 'e' then
+            begin
+              // Error
+              Cell := TCell.Create(Row, Col, CellValue, ctError);
+            end
+            else
+            begin
+              // Número ou data
+              if TryStrToFloat(CellValue, NumValue) then
+                Cell := TCell.Create(Row, Col, NumValue, ctNumber)
+              else
+                Cell := TCell.Create(Row, Col, CellValue, ctString);
+            end;
+            
+            AWorksheet.AddCell(Cell);
+          end;
+        finally
+          CellTags.Free;
+        end;
       end;
+    finally
+      RowTags.Free;
     end;
-  finally
-    Stream.Free;
+  except
+    on E: Exception do
+      raise EXlsx4DException.CreateFmt('Erro ao ler sheet%d.xml: %s', [ASheetIndex, E.Message]);
   end;
 end;
 
-procedure TXLSXEngine.ParseCellRef(const ACellRef: string; out ARow,
-  ACol: Integer);
+function TXLSXEngine.ParseCellReference(const ACellRef: string; 
+  out ARow, ACol: Integer): Boolean;
 var
   I: Integer;
   ColPart, RowPart: string;
 begin
+  Result := False;
   ColPart := '';
   RowPart := '';
-
+  
   for I := 1 to Length(ACellRef) do
   begin
     if CharInSet(ACellRef[I], ['A'..'Z', 'a'..'z']) then
       ColPart := ColPart + UpCase(ACellRef[I])
-    else
+    else if CharInSet(ACellRef[I], ['0'..'9']) then
       RowPart := RowPart + ACellRef[I];
   end;
+  
+  if (ColPart = '') or (RowPart = '') then
+    Exit;
+    
+  ACol := GetColumnIndex(ColPart);
+  ARow := StrToIntDef(RowPart, 0);
+  
+  Result := (ARow > 0) and (ACol > 0);
+end;
 
-  ACol := ColLetterToNumber(ColPart);
-  ARow := StrToIntDef(RowPart, 1);
+function TXLSXEngine.GetColumnIndex(const ACell: string): Integer;
+var
+  I: Integer;
+begin
+  Result := 0;
+  for I := 1 to Length(ACell) do
+  begin
+    Result := Result * 26 + (Ord(ACell[I]) - Ord('A') + 1);
+  end;
+end;
+
+function TXLSXEngine.GetSharedString(AIndex: Integer): string;
+begin
+  if (AIndex >= 0) and (AIndex < FSharedStrings.Count) then
+    Result := FSharedStrings[AIndex]
+  else
+    Result := '';
+end;
+
+function TXLSXEngine.LoadFromFile(const AFileName: string): TWorksheets;
+begin
+  if not TFile.Exists(AFileName) then
+    raise EXlsx4DException.CreateFmt('Arquivo não encontrado: %s', [AFileName]);
+    
+  FWorksheets.Clear;
+  
+  try
+    ExtractXLSXContents(AFileName);
+    LoadSharedStrings;
+    LoadWorksheets;
+    Result := FWorksheets;
+  except
+    on E: Exception do
+    begin
+      Cleanup;
+      raise EXlsx4DException.CreateFmt('Erro ao carregar arquivo XLSX: %s', [E.Message]);
+    end;
+  end;
 end;
 
 end.
-
