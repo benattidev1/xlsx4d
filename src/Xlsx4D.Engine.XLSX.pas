@@ -26,10 +26,10 @@ type
     function GetSharedString(AIndex: Integer): string;
     procedure Cleanup;
     
-    // Helpers simples para parsing XML sem MSXML
+    // Helpers para parsing XML
     function ParseXMLAttribute(const AXMLLine, AAttrName: string): string;
-    function ParseXMLValue(const AXMLLine, ATagName: string): string;
-    function ExtractTextBetweenTags(const AXMLContent, ATagName: string): TStringList;
+    function ParseXMLValue(const AXMLContent, ATagName: string): string;
+    function ExtractAllBetweenTags(const AXMLContent, AStartTag, AEndTag: string): TStringList;
   public
     constructor Create;
     destructor Destroy; override;
@@ -42,8 +42,7 @@ implementation
 uses
   System.IOUtils,
   System.Variants,
-  System.StrUtils,
-  System.RegularExpressions;
+  System.StrUtils;
 
 { TXLSXEngine }
 
@@ -95,6 +94,7 @@ var
   SearchStr: string;
 begin
   Result := '';
+   
   SearchStr := AAttrName + '="';
   StartPos := Pos(SearchStr, AXMLLine);
   
@@ -107,7 +107,7 @@ begin
   end;
 end;
 
-function TXLSXEngine.ParseXMLValue(const AXMLLine, ATagName: string): string;
+function TXLSXEngine.ParseXMLValue(const AXMLContent, ATagName: string): string;
 var
   StartTag, EndTag: string;
   StartPos, EndPos: Integer;
@@ -116,58 +116,39 @@ begin
   StartTag := '<' + ATagName + '>';
   EndTag := '</' + ATagName + '>';
   
-  StartPos := Pos(StartTag, AXMLLine);
+  StartPos := Pos(StartTag, AXMLContent);
   if StartPos > 0 then
   begin
     StartPos := StartPos + Length(StartTag);
-    EndPos := PosEx(EndTag, AXMLLine, StartPos);
+    EndPos := PosEx(EndTag, AXMLContent, StartPos);
     if EndPos > StartPos then
-      Result := Copy(AXMLLine, StartPos, EndPos - StartPos);
+      Result := Copy(AXMLContent, StartPos, EndPos - StartPos);
   end;
 end;
 
-function TXLSXEngine.ExtractTextBetweenTags(const AXMLContent, ATagName: string): TStringList;
+function TXLSXEngine.ExtractAllBetweenTags(const AXMLContent, AStartTag, AEndTag: string): TStringList;
 var
-  Lines: TStringList;
-  I: Integer;
-  InTag: Boolean;
-  CurrentContent: string;
-  Line: string;
-  StartTag, EndTag: string;
+  CurrentPos: Integer;
+  StartPos, EndPos: Integer;
+  TagContent: string;
 begin
   Result := TStringList.Create;
-  Lines := TStringList.Create;
-  try
-    Lines.Text := AXMLContent;
+  CurrentPos := 1;
+  
+  while True do
+  begin
+    StartPos := PosEx(AStartTag, AXMLContent, CurrentPos);
+    if StartPos = 0 then
+      Break;
     
-    StartTag := '<' + ATagName;
-    EndTag := '</' + ATagName + '>';
-    InTag := False;
-    CurrentContent := '';
+    EndPos := PosEx(AEndTag, AXMLContent, StartPos + Length(AStartTag));
+    if EndPos = 0 then
+      Break;
     
-    for I := 0 to Lines.Count - 1 do
-    begin
-      Line := Trim(Lines[I]);
-      
-      if Pos(StartTag, Line) > 0 then
-      begin
-        InTag := True;
-        CurrentContent := Line;
-      end
-      else if InTag then
-      begin
-        CurrentContent := CurrentContent + ' ' + Line;
-      end;
-      
-      if InTag and (Pos(EndTag, Line) > 0) then
-      begin
-        Result.Add(CurrentContent);
-        InTag := False;
-        CurrentContent := '';
-      end;
-    end;
-  finally
-    Lines.Free;
+    TagContent := Copy(AXMLContent, StartPos, (EndPos + Length(AEndTag)) - StartPos);
+    Result.Add(TagContent);
+    
+    CurrentPos := EndPos + Length(AEndTag);
   end;
 end;
 
@@ -189,7 +170,7 @@ begin
   try
     XMLContent := TFile.ReadAllText(SharedStringsPath, TEncoding.UTF8);
     
-    SITags := ExtractTextBetweenTags(XMLContent, 'si');
+    SITags := ExtractAllBetweenTags(XMLContent, '<si>', '</si>');
     try
       for I := 0 to SITags.Count - 1 do
       begin
@@ -217,13 +198,33 @@ begin
   WorkbookPath := TPath.Combine(FTempPath, 'xl\workbook.xml');
   
   if not TFile.Exists(WorkbookPath) then
-    raise EXlsx4DException.Create('Arquivo workbook.xml nÃ£o encontrado');
+    raise EXlsx4DException.Create('Arquivo workbook.xml não encontrado');
   
   try
     XMLContent := TFile.ReadAllText(WorkbookPath, TEncoding.UTF8);
     
-    SheetTags := ExtractTextBetweenTags(XMLContent, 'sheet');
+    SheetTags := TStringList.Create;
     try
+      var CurrentPos := 1;
+      while True do
+      begin
+        var StartPos := PosEx('<sheet ', XMLContent, CurrentPos);
+        if StartPos = 0 then
+          Break;
+        
+        var EndPos := PosEx('/>', XMLContent, StartPos);
+        if EndPos = 0 then
+          EndPos := PosEx('>', XMLContent, StartPos);
+        
+        if EndPos = 0 then
+          Break;
+        
+        var SheetTag := Copy(XMLContent, StartPos, (EndPos + 2) - StartPos);
+        SheetTags.Add(SheetTag);
+        
+        CurrentPos := EndPos + 2;
+      end;
+      
       for I := 0 to SheetTags.Count - 1 do
       begin
         SheetName := ParseXMLAttribute(SheetTags[I], 'name');
@@ -266,11 +267,11 @@ begin
   try
     XMLContent := TFile.ReadAllText(SheetDataPath, TEncoding.UTF8);
     
-    RowTags := ExtractTextBetweenTags(XMLContent, 'row');
+    RowTags := ExtractAllBetweenTags(XMLContent, '<row ', '</row>');
     try
       for I := 0 to RowTags.Count - 1 do
       begin
-        CellTags := ExtractTextBetweenTags(RowTags[I], 'c');
+        CellTags := ExtractAllBetweenTags(RowTags[I], '<c ', '</c>');
         try
           for J := 0 to CellTags.Count - 1 do
           begin
@@ -283,7 +284,6 @@ begin
             if not ParseCellReference(CellRef, Row, Col) then
               Continue;
             
-            // Processa de acordo com o tipo
             if CellType = 's' then
             begin
               // String compartilhada
@@ -304,13 +304,18 @@ begin
               // Error
               Cell := TCell.Create(Row, Col, CellValue, ctError);
             end
-            else
+            else if CellValue <> '' then
             begin
-              // NÃºmero ou data
+              // Número ou data
               if TryStrToFloat(CellValue, NumValue) then
                 Cell := TCell.Create(Row, Col, NumValue, ctNumber)
               else
                 Cell := TCell.Create(Row, Col, CellValue, ctString);
+            end
+            else
+            begin
+              // Célula vazia
+              Cell := TCell.Empty(Row, Col);
             end;
             
             AWorksheet.AddCell(Cell);
@@ -377,7 +382,7 @@ end;
 function TXLSXEngine.LoadFromFile(const AFileName: string): TWorksheets;
 begin
   if not TFile.Exists(AFileName) then
-    raise EXlsx4DException.CreateFmt('Arquivo nÃ£o encontrado: %s', [AFileName]);
+    raise EXlsx4DException.CreateFmt('Arquivo não encontrado: %s', [AFileName]);
     
   FWorksheets.Clear;
   

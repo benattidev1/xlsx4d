@@ -91,6 +91,8 @@ begin
   try
     FWorkSheets := Engine.LoadFromFile(AFileName);
     FFileName := AFileName;
+
+    Result := (Assigned(FWorkSheets));
   finally
     Engine.Free;    
   end;
