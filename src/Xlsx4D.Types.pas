@@ -38,8 +38,11 @@ type
 
     function GetCell(ARow, ACol: Integer): TCell;
     procedure SetCell(ARow, ACol: Integer; const Value: TCell);
+    function GetCellByRef(ARow: Integer; const AColRef: string): TCell;
+    procedure SetCellByRef(ARow: Integer; const AColRef: string; const Value: TCell);
     function GetRowCount: Integer;
     function GetColCount: Integer;
+    class function ColRefToNumber(const AColRef: string): Integer; static;
   public
     constructor Create(const AName: string);
     destructor Destroy; override;
@@ -50,6 +53,7 @@ type
 
     property Name: string read FName write FName;
     property Cells[ARow, ACol: Integer]: TCell read GetCell write SetCell; default;
+    property CellsByRef[ARow: Integer; const AColRef: string]: TCell read GetCellByRef write SetCellByRef;
     property RowCount: Integer read GetRowCount;
     property ColCount: Integer read GetColCount;
   end;
@@ -233,6 +237,31 @@ end;
 procedure TWorksheet.SetCell(ARow, ACol: Integer; const Value: TCell);
 begin
   AddCell(Value);
+end;
+
+class function TWorksheet.ColRefToNumber(const AColRef: string): Integer;
+var
+  I: Integer;
+  C: Char;
+begin
+  Result := 0;
+  for I := 1 to Length(AColRef) do
+  begin
+    C := UpCase(AColRef[I]);
+    if not (C in ['A'..'Z']) then
+      raise EXlsx4DException.CreateFmt('Invalid column reference: %s', [AColRef]);
+    Result := Result * 26 + (Ord(C) - Ord('A') + 1);
+  end;
+end;
+
+function TWorksheet.GetCellByRef(ARow: Integer; const AColRef: string): TCell;
+begin
+  Result := GetCell(ARow, ColRefToNumber(AColRef));
+end;
+
+procedure TWorksheet.SetCellByRef(ARow: Integer; const AColRef: string; const Value: TCell);
+begin
+  SetCell(ARow, ColRefToNumber(AColRef), Value);
 end;
 
 { TWorksheets }
