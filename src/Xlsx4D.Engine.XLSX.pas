@@ -336,7 +336,7 @@ begin
     end;
   except
     on E: Exception do
-      raise EXlsx4DException.CreateFmt('
+      raise EXlsx4DException.CreateFmt(
         'Failed to load worksheet data for sheet "%s": %s',
         [ASheetName, E.Message]
       );
